@@ -1,0 +1,40 @@
+{
+  "Applications": [
+    {
+      // Uri to Docker socket
+      "DockerSocketUri": "unix:///var/run/docker.sock", // Optional
+
+      // The name of the container to monitor, should match the name of the container in Docker
+      "DockerContainerName": null, // Required
+
+      // The application type
+      // Possible values: "Tcp", "Udp"
+      "ApplicationType": "Tcp", // Optional
+
+      // The port (0-65535) to listen on
+      "ListenPort": 0, // Required
+
+      // The port (0-65535) to forward to
+      "TargetPort": 0, // Required
+
+      // The address to forward to
+      "TargetAddress": "127.0.0.1", // Optional
+
+      // The idle timeout before pausing the container
+      "InactiveContainerTime": "00:20:00", // Optional
+
+      // How often to check for inactivity
+      "InactivityCheckInterval": "00:00:05", // Optional
+
+      // The action to take when the container becomes inactive
+      // Possible values: "Pause", "Stop"
+      "InactiveContainerAction": "Pause", // Optional
+
+      // The health check command to run on the container, when it returns successful then we know the container will accept our request
+      "TargetContainerHealthCheck": "", // Optional
+
+      // The startup timeout before forwarding the request to the container after it has been unpaused
+      "TargetContainerStartupTime": "00:00:01" // Optional
+    }
+  ]
+}
