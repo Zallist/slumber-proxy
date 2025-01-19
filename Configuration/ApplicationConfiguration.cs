@@ -13,6 +13,12 @@ public class ApplicationConfiguration
     public string DockerContainerName { get; private set; } = "";
 
     /// <summary>
+    /// Should the configuration be applied to all containers in the docker-compose group
+    /// </summary>
+    [JsonProperty(Required = Required.DisallowNull)]
+    public bool ApplyToDockerComposeGroup { get; private set; } = true;
+
+    /// <summary>
     /// Should support <see cref="ApplicationType.Tcp"/> or <see cref="ApplicationType.Udp"/>
     /// </summary>
     [JsonProperty(Required = Required.DisallowNull, ItemConverterType = typeof(StringEnumConverter))]

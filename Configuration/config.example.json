@@ -7,6 +7,9 @@
       // The name of the container to monitor, should match the name of the container in Docker
       "DockerContainerName": null, // Required
 
+      // Apply this configuration to all containers/networks/etc in the same group
+      "ApplyToDockerComposeGroup": true,
+
       // The application type
       // Possible values: "Tcp", "Udp"
       "ApplicationType": "Tcp", // Optional

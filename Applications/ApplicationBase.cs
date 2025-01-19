@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using ContainerSuspender.Configuration;
@@ -34,41 +37,47 @@ public abstract class ApplicationBase : IDisposable
 
     public async ValueTask<bool> DoActivityCheck(CancellationToken cancellationToken = default)
     {
-        if (containerIsInactiveState)
-            return containerIsInactiveState;
-
-        if (lastActivity + configuration.InactiveContainerTime < DateTime.UtcNow)
+        if (!containerIsInactiveState && lastActivity + configuration.InactiveContainerTime < DateTime.UtcNow)
         {
             logger.LogInformation("Container '{configuration.DockerContainerName}' is inactive; suspending...", configuration.DockerContainerName);
 
-            switch (configuration.InactiveContainerAction)
-            {
-                case InactiveContainerAction.Pause:
-                    await dockerClient.Containers.PauseContainerAsync(await GetContainerId(cancellationToken), cancellationToken);
-                    break;
-                case InactiveContainerAction.Stop:
-                    await dockerClient.Containers.StopContainerAsync(await GetContainerId(cancellationToken), new Docker.DotNet.Models.ContainerStopParameters(), cancellationToken);
-                    break;
-            }
+            await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
+                await ApplyToContainer(id);
 
             containerIsInactiveState = true;
         }
 
         return containerIsInactiveState;
+
+        async ValueTask ApplyToContainer(string containerId)
+        {
+            switch (configuration.InactiveContainerAction)
+            {
+                case InactiveContainerAction.Pause:
+                    await dockerClient.Containers.PauseContainerAsync(containerId, cancellationToken);
+                    break;
+                case InactiveContainerAction.Stop:
+                    await dockerClient.Containers.StopContainerAsync(containerId, new ContainerStopParameters(), cancellationToken);
+                    break;
+                default:
+                    throw new NotImplementedException($"{configuration.InactiveContainerAction} is not implemented.");
+            }
+        }
     }
 
     private bool CheckIfContainerIsInactiveState(CancellationToken cancellationToken = default)
     {
         var containerId = GetContainerId(cancellationToken).GetAwaiter().GetResult();
+
         var response = dockerClient.Containers.InspectContainerAsync(containerId, cancellationToken).GetAwaiter().GetResult()
             ?? throw new Exception($"Container '{configuration.DockerContainerName}' not found.");
 
         return containerIsInactiveState = !response.State.Running || response.State.Paused;
     }
 
-    private TaskCompletionSource EnsureContainerIsRunningTaskCompletionSource = null!;
+    private TaskCompletionSource<bool> EnsureContainerIsRunningTaskCompletionSource = null!;
 
-    public async ValueTask EnsureContainerIsRunning(CancellationToken cancellationToken = default)
+    public async ValueTask<bool> EnsureContainerIsRunning(CancellationToken cancellationToken = default)
     {
         if (containerIsInactiveState)
         {
@@ -90,52 +99,43 @@ public abstract class ApplicationBase : IDisposable
                 }
 
                 if (EnsureContainerIsRunningTaskCompletionSource != null && !isMaster)
-                {
-                    await EnsureContainerIsRunningTaskCompletionSource.Task.ConfigureAwait(false);
-                    return;
-                }
+                    return await EnsureContainerIsRunningTaskCompletionSource.Task.ConfigureAwait(false);
 
                 logger.LogInformation("Container '{configuration.DockerContainerName}' is inactive; starting...", configuration.DockerContainerName);
 
-                var containerId = await GetContainerId(cancellationToken);
-
-                if (cancellationToken.IsCancellationRequested) return;
-                if (string.IsNullOrEmpty(containerId))
+                await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
                 {
-                    // TODO : Create the container
-                    logger.LogError("Container '{configuration.DockerContainerName}' not found. TODO : Create the container; Skipping for now.", configuration.DockerContainerName);
-                    return;
-                }
+                    var inspect = await dockerClient.Containers.InspectContainerAsync(id, cancellationToken);
 
-                var inspectResult = await dockerClient.Containers.InspectContainerAsync(containerId, cancellationToken);
-
-                if (cancellationToken.IsCancellationRequested) return;
-
-                if (inspectResult == null)
-                {
-                    // TODO : Create the container
-                    logger.LogError("Container '{configuration.DockerContainerName}' not found. TODO : Create the container; Skipping for now.", configuration.DockerContainerName);
-                    return;
-                }
-
-                if (inspectResult.State.Paused)
-                {
-                    await dockerClient.Containers.UnpauseContainerAsync(containerId, cancellationToken);
-                }
-                else if (!inspectResult.State.Running)
-                {
-                    if (!await dockerClient.Containers.StartContainerAsync(containerId, new Docker.DotNet.Models.ContainerStartParameters(), cancellationToken))
+                    if (inspect == null)
                     {
-                        logger.LogError("Failed to start container '{configuration.DockerContainerName}'.", configuration.DockerContainerName);
-                        return;
+                        // TODO : Create the container
+                        logger.LogError("Container '{configuration.DockerContainerName}', id: {id} not found. TODO : Create the container; Skipping for now.", configuration.DockerContainerName, id);
+                        return false;
+                    }
+
+                    if (inspect.State.Paused)
+                    {
+                        await dockerClient.Containers.UnpauseContainerAsync(id, cancellationToken);
+                    }
+                    else if (!inspect.State.Running)
+                    {
+                        var started = await dockerClient.Containers.StartContainerAsync(id, new ContainerStartParameters(), cancellationToken);
+
+                        if (!started)
+                        {
+                            // TODO : Create the container
+                            logger.LogError("Failed to start container '{configuration.DockerContainerName}', id: {id}.", configuration.DockerContainerName, id);
+                            return false;
+                        }
                     }
                 }
 
-                if (cancellationToken.IsCancellationRequested) return;
+                if (cancellationToken.IsCancellationRequested) return false;
 
                 await Task.Delay(configuration.TargetContainerStartupTime, cancellationToken);
 
-                if (cancellationToken.IsCancellationRequested) return;
+                if (cancellationToken.IsCancellationRequested) return false;
 
                 bool healthCheckPassed;
 
@@ -154,35 +154,86 @@ public abstract class ApplicationBase : IDisposable
                     if (!healthCheckPassed)
                     {
                         await Task.Delay(100, cancellationToken);
-                        if (cancellationToken.IsCancellationRequested) return;
+                        if (cancellationToken.IsCancellationRequested) return false;
                     }
                 }
                 while (!healthCheckPassed);
 
                 containerIsInactiveState = false;
-                EnsureContainerIsRunningTaskCompletionSource?.TrySetResult();
+                return containerIsInactiveState;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to start container '{configuration.DockerContainerName}'.", configuration.DockerContainerName);
+                return false;
             }
             finally
             {
                 if (isMaster)
                 {
-                    EnsureContainerIsRunningTaskCompletionSource?.TrySetResult();
+                    EnsureContainerIsRunningTaskCompletionSource?.TrySetResult(!containerIsInactiveState);
                     EnsureContainerIsRunningTaskCompletionSource = null;
                 }
             }
         }
+        else
+        {
+            return !containerIsInactiveState;
+        }
     }
 
-    protected async ValueTask<string> GetContainerId(CancellationToken cancellationToken = default)
+    protected async Task<string> GetContainerId(CancellationToken cancellationToken = default)
     {
-        var containers = await dockerClient.Containers.ListContainersAsync(new ContainersListParameters() { All = true }, cancellationToken);
+        await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
+            return id;
 
-        var containerId = containers.FirstOrDefault(c => c.Names.Contains($"/{configuration.DockerContainerName}"))?.ID;
+        return null;
+    }
 
-        if (containerId == null)
-            logger.LogError("Container '{configuration.DockerContainerName}' not found.", configuration.DockerContainerName);
+    protected IAsyncEnumerable<string> GetContainerIds(CancellationToken cancellationToken = default) => 
+        GetContainerIds(configuration.DockerContainerName, cancellationToken);
 
-        return containerId ?? string.Empty;
+    protected async IAsyncEnumerable<string> GetContainerIds(string dockerContainerIdOrName, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var allContainers = await dockerClient.Containers.ListContainersAsync(new ContainersListParameters() { All = true }, cancellationToken);
+        var allNetworks = await dockerClient.Networks.ListNetworksAsync(new NetworksListParameters() {  }, cancellationToken);
+        var allVolumes = await dockerClient.Volumes.ListAsync(new VolumesListParameters() {  }, cancellationToken);
+
+        var baseContainer = allContainers.FirstOrDefault(c => c.Names.Contains($"/{dockerContainerIdOrName}"));
+
+        if (string.IsNullOrEmpty(baseContainer?.ID)) // Double check in case somehow ID is empty
+        {
+            logger.LogError("Container '{dockerContainerIdOrName}' not found.", dockerContainerIdOrName);
+            yield break;
+        }
+
+        // We always want to yield the base container
+        yield return baseContainer.ID;
+        logger.LogDebug("Container '{dockerContainerIdOrName}' found with ID '{baseContainer.ID}'.", dockerContainerIdOrName, baseContainer.ID);
+
+        if (configuration.ApplyToDockerComposeGroup)
+        {
+            // If we care about the docker compose group, then we want to yield all containers in the group
+            var composeProject = baseContainer.Labels["com.docker.compose.project"];
+
+            if (string.IsNullOrEmpty(composeProject))
+            {
+                logger.LogInformation("Container '{dockerContainerIdOrName}' is not part of a docker compose group.", dockerContainerIdOrName);
+            }
+            else
+            {
+                foreach (var container in allContainers)
+                {
+                    if (container.ID == baseContainer.ID) continue; // Skip the base container
+
+                    if (container.Labels["com.docker.compose.project"] == composeProject)
+                    {
+                        yield return container.ID;
+                        logger.LogDebug("Compose-Related container for '{dockerContainerIdOrName}' found with ID '{container.ID}'.", dockerContainerIdOrName, container.ID);
+                    }
+                }
+            }
+        }
     }
 
     public virtual void Dispose()
