@@ -10,7 +10,7 @@ A tool which acts as a reverse proxy to a containered application, with a bit of
 * Interact on a whole docker-compose project, rather than just individual containers (turn off the database AS WELL as the app)
 
 # Configuration
-Configuration is handled by a .json file, an commented example of which is located [Here](blob/main/Configuration/config.example.json)
+Configuration is handled by a .json file, an commented example of which is located [Here](Configuration/config.example.json)
 
 # Confirmed applications that work without issue
 * Stable Diffusion WebUI / Forge / SD.Next
