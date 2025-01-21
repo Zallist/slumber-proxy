@@ -10,6 +10,16 @@
       // Apply this configuration to all containers/networks/etc in the same group
       "ApplyToDockerComposeGroup": true,
 
+      // Should we check the health of the container before forwarding the request to it
+      "DockerContainerHealthCheck": false, // Optional
+
+      // How often to check the health of the container after it has been unpaused
+      "DockerContainerHealthCheckInterval": "00:00:01", // Optional
+
+      // The startup timeout before forwarding the request to the container after it has been unpaused
+      "DockerContainerStartupTime": "00:00:01", // Optional
+
+
       // The application type
       // Possible values: "Tcp", "Udp"
       "ApplicationType": "Tcp", // Optional
@@ -31,13 +41,7 @@
 
       // The action to take when the container becomes inactive
       // Possible values: "Pause", "Stop"
-      "InactiveContainerAction": "Pause", // Optional
-
-      // The health check command to run on the container, when it returns successful then we know the container will accept our request
-      "TargetContainerHealthCheck": "", // Optional
-
-      // The startup timeout before forwarding the request to the container after it has been unpaused
-      "TargetContainerStartupTime": "00:00:01" // Optional
+      "InactiveContainerAction": "Pause" // Optional
     }
   ]
 }

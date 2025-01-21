@@ -19,6 +19,25 @@ public class ApplicationConfiguration
     public bool ApplyToDockerComposeGroup { get; private set; } = true;
 
     /// <summary>
+    /// How long should we wait after reactivating a container before we try and access it?
+    /// We delay <see cref="DockerContainerHealthCheck"/> until after this
+    /// </summary>
+    [JsonProperty(Required = Required.DisallowNull)]
+    public TimeSpan DockerContainerStartupTime { get; private set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Should the container be checked for health after reactivating
+    /// </summary>
+    [JsonProperty(Required = Required.DisallowNull)]
+    public bool DockerContainerHealthCheck { get; private set; } = false;
+
+    /// <summary>
+    /// How often (on reactivating) to check the health of the container
+    /// </summary>
+    [JsonProperty(Required = Required.DisallowNull)]
+    public TimeSpan DockerContainerHealthCheckInterval { get; private set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
     /// Should support <see cref="ApplicationType.Tcp"/> or <see cref="ApplicationType.Udp"/>
     /// </summary>
     [JsonProperty(Required = Required.DisallowNull, ItemConverterType = typeof(StringEnumConverter))]
@@ -50,17 +69,4 @@ public class ApplicationConfiguration
     /// </summary>
     [JsonProperty(Required = Required.DisallowNull, ItemConverterType = typeof(StringEnumConverter))]
     public InactiveContainerAction InactiveContainerAction { get; private set; } = InactiveContainerAction.Pause;
-
-    /// <summary>
-    /// The request we should make to ensure the container is running and ready to accept requests
-    /// </summary>
-    [JsonProperty(Required = Required.Default)]
-    public string TargetContainerHealthCheck { get; private set; } = "";
-
-    /// <summary>
-    /// How long should we wait after reactivating a container before we try and access it?
-    /// This will call <see cref="TargetContainerHealthCheck"/> AFTER
-    /// </summary>
-    [JsonProperty(Required = Required.DisallowNull)]
-    public TimeSpan TargetContainerStartupTime { get; private set; } = TimeSpan.FromSeconds(1);
 }

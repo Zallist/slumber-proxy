@@ -1,13 +1,10 @@
 ﻿using System;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using ContainerSuspender.Configuration;
-using Docker.DotNet;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 
 namespace ContainerSuspender.Applications
 {
@@ -15,11 +12,8 @@ namespace ContainerSuspender.Applications
     {
         private TcpListener tcpListener;
 
-        private readonly CancellationTokenSource cancellationTokenSource = new ();
-
-        public override void Start()
+        protected override void StartApplication(CancellationToken cancellationToken)
         {
-
             tcpListener = new TcpListener(IPAddress.Parse("0.0.0.0"), configuration.ListenPort)
             {
                 ExclusiveAddressUse = true
@@ -31,17 +25,7 @@ namespace ContainerSuspender.Applications
 
             tcpListener.Start();
 
-            _ = Task.Factory.StartNew(() => MonitorAndForwardTraffic(cancellationTokenSource.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            _ = Task.Factory.StartNew(() => InactivityCheck(cancellationTokenSource.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        }
-
-        private async ValueTask InactivityCheck(CancellationToken cancellationToken)
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await DoActivityCheck(cancellationToken);
-                await Task.Delay(configuration.InactivityCheckInterval, cancellationToken);
-            }
+            _ = Task.Factory.StartNew(() => MonitorAndForwardTraffic(cancellationToken), cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
         private async ValueTask MonitorAndForwardTraffic(CancellationToken token)
@@ -131,17 +115,9 @@ namespace ContainerSuspender.Applications
                     ActivityDetected();
                 }
             }
-            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                if (ex.InnerException is OperationCanceledException) return;
-                if (ex.InnerException is SocketException socketException)
-                {
-                    if (socketException.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
-                        return;
-
-                    if (socketException.InnerException is OperationCanceledException) return;
-                }
+                if (CanIgnoreException(ex)) return;
 
                 logger.LogError(ex, "Error during stream copy");
             }
@@ -150,9 +126,6 @@ namespace ContainerSuspender.Applications
         public override void Dispose()
         {
             base.Dispose();
-
-            cancellationTokenSource?.Cancel();
-            cancellationTokenSource?.Dispose();
 
             tcpListener?.Dispose();
             tcpListener = null;

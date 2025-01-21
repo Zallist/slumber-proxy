@@ -25,9 +25,7 @@ namespace ContainerSuspender.Applications
         private UdpClient udpListener;
         private readonly Dictionary<IPEndPoint, UdpForwarder> udpForwarders = new();
 
-        private readonly CancellationTokenSource cancellationTokenSource = new();
-
-        public override void Start()
+        protected override void StartApplication(CancellationToken cancellationToken)
         {
             udpListener = new UdpClient(configuration.ListenPort)
             {
@@ -40,17 +38,14 @@ namespace ContainerSuspender.Applications
             udpListener.AllowNatTraversal(true);
 #endif
 
-            _ = Task.Factory.StartNew(() => MonitorAndForwardTraffic(cancellationTokenSource.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            _ = Task.Factory.StartNew(() => InactivityCheck(cancellationTokenSource.Token), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            _ = Task.Factory.StartNew(() => MonitorAndForwardTraffic(cancellationToken), cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            _ = Task.Factory.StartNew(() => UdpClientCleanup(cancellationToken), cancellationToken, TaskCreationOptions.PreferFairness, TaskScheduler.Default);
         }
 
-        private async ValueTask InactivityCheck(CancellationToken cancellationToken)
+        private async ValueTask UdpClientCleanup(CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await DoActivityCheck(cancellationToken);
-                await Task.Delay(configuration.InactivityCheckInterval, cancellationToken);
-
                 HashSet<UdpForwarder> remove = null;
 
                 foreach (var forwarder in udpForwarders.Values)
@@ -67,6 +62,8 @@ namespace ContainerSuspender.Applications
                 if (remove != null)
                     foreach (var forwarder in remove)
                         udpForwarders.Remove(forwarder.Endpoint);
+
+                await Task.Delay(configuration.InactivityCheckInterval, cancellationToken);
             }
         }
 
@@ -132,17 +129,9 @@ namespace ContainerSuspender.Applications
                 await forwarder.Client.SendAsync(udpBuffer, udpBuffer.Length)
                     .ConfigureAwait(false);
             }
-            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                if (ex.InnerException is OperationCanceledException) return;
-                if (ex.InnerException is SocketException socketException)
-                {
-                    if (socketException.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
-                        return;
-
-                    if (socketException.InnerException is OperationCanceledException) return;
-                }
+                if (CanIgnoreException(ex)) return;
 
                 logger.LogError(ex, "Error during udp request");
                 forwarder.Client?.Dispose();
@@ -187,9 +176,6 @@ namespace ContainerSuspender.Applications
         public override void Dispose()
         {
             base.Dispose();
-
-            cancellationTokenSource?.Cancel();
-            cancellationTokenSource?.Dispose();
 
             udpListener?.Dispose();
             udpListener = null;

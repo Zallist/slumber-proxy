@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,16 +16,19 @@ namespace ContainerSuspender.Applications;
 
 public abstract class ApplicationBase : IDisposable
 {
-    protected DateTime lastActivity = DateTime.UtcNow;
+    protected Stopwatch activityCheckStopwatch = new();
     protected readonly DockerClient dockerClient;
     protected readonly ApplicationConfiguration configuration;
     protected readonly ILogger<ApplicationBase> logger;
 
     protected bool containerIsInactiveState = false;
 
+    private readonly CancellationTokenSource cancellationTokenSource = new();
+
     public ApplicationBase(ApplicationConfiguration configuration)
     {
         logger = Program.LoggerFactory.CreateLogger<ApplicationBase>();
+        activityCheckStopwatch.Start();
 
         dockerClient = new DockerClientConfiguration(new Uri(configuration.DockerSocketUri)).CreateClient();
         this.configuration = configuration;
@@ -31,20 +36,50 @@ public abstract class ApplicationBase : IDisposable
         CheckIfContainerIsInactiveState();
     }
 
-    public abstract void Start();
+    public void Start()
+    {
+        StartApplication(cancellationTokenSource.Token);
 
-    public void ActivityDetected() => lastActivity = DateTime.UtcNow;
+        _ = Task.Factory.StartNew(() => InactivityCheck(cancellationTokenSource.Token), cancellationTokenSource.Token, TaskCreationOptions.PreferFairness, TaskScheduler.Default);
+    }
+
+    protected abstract void StartApplication(CancellationToken cancellationToken);
+
+    private async ValueTask InactivityCheck(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await DoActivityCheck(cancellationToken);
+            await Task.Delay(configuration.InactivityCheckInterval, cancellationToken);
+        }
+    }
+
+    public void ActivityDetected() => activityCheckStopwatch.Restart();
 
     public async ValueTask<bool> DoActivityCheck(CancellationToken cancellationToken = default)
     {
-        if (!containerIsInactiveState && lastActivity + configuration.InactiveContainerTime < DateTime.UtcNow)
+        if (activityCheckStopwatch.Elapsed > configuration.InactiveContainerTime)
         {
-            logger.LogInformation("Container '{configuration.DockerContainerName}' is inactive; suspending...", configuration.DockerContainerName);
+            if (!containerIsInactiveState)
+            {
+                logger.LogInformation("Container '{configuration.DockerContainerName}' is inactive; suspending...", configuration.DockerContainerName);
 
-            await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
-                await ApplyToContainer(id);
+                await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
+                    await ApplyToContainer(id);
 
-            containerIsInactiveState = true;
+                containerIsInactiveState = true;
+            }
+            else
+            {
+                // Container should already be inactive, so this is a sanity check to make sure it IS
+                // Since it's possible that something ELSE restarted it - user command, autorestart on update, etc
+                logger.LogDebug("Container '{configuration.DockerContainerName}' is inactive; checking it still is...", configuration.DockerContainerName);
+
+                await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
+                    await ApplyToContainer(id);
+            }
+
+            activityCheckStopwatch.Restart(); // Restart the activity checker so we do intermittent checks regardless of state
         }
 
         return containerIsInactiveState;
@@ -133,31 +168,54 @@ public abstract class ApplicationBase : IDisposable
 
                 if (cancellationToken.IsCancellationRequested) return false;
 
-                await Task.Delay(configuration.TargetContainerStartupTime, cancellationToken);
+                await Task.Delay(configuration.DockerContainerStartupTime, cancellationToken);
 
                 if (cancellationToken.IsCancellationRequested) return false;
 
-                bool healthCheckPassed;
-
-                do
+                if (configuration.DockerContainerHealthCheck)
                 {
-                    if (string.IsNullOrWhiteSpace(configuration.TargetContainerHealthCheck))
-                    {
-                        healthCheckPassed = true;
-                        break;
-                    }
+                    var maxHealthCheckAttempts = (int)Math.Ceiling(TimeSpan.FromMinutes(5) / configuration.DockerContainerHealthCheckInterval);
+                    var containerId = await GetContainerId(cancellationToken);
+                    bool healthCheckPassed = false;
 
-                    logger.LogInformation("Checking if container '{configuration.DockerContainerName}' is healthy...", configuration.DockerContainerName);
-                    logger.LogWarning("NOT IMPLEMENTED YET");
-                    break;
+                    for (var healthCheckAttempt = 0; healthCheckAttempt < maxHealthCheckAttempts && !cancellationToken.IsCancellationRequested && !healthCheckPassed; healthCheckAttempt++)
+                    {
+                        logger.LogDebug("Checking if container '{configuration.DockerContainerName}' is healthy...", configuration.DockerContainerName);
+
+                        var inspect = await dockerClient.Containers.InspectContainerAsync(containerId, cancellationToken);
+
+                        if (inspect == null)
+                        {
+                            logger.LogWarning("Container '{configuration.DockerContainerName}' not found.", configuration.DockerContainerName);
+                            healthCheckPassed = false;
+                        }
+                        else if (!inspect.State.Running)
+                        {
+                            logger.LogWarning("Container '{configuration.DockerContainerName}' is not running.", configuration.DockerContainerName);
+                            healthCheckPassed = false;
+                        }
+                        else if (
+                            !string.IsNullOrEmpty(inspect.State.Health.Status) &&
+                            !inspect.State.Health.Status.Equals("healthy", StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogDebug("Container '{configuration.DockerContainerName}' is not healthy.", configuration.DockerContainerName);
+                            healthCheckPassed = false;
+                        }
+                        else
+                        {
+                            healthCheckPassed = true;
+                        }
+
+                        if (!healthCheckPassed)
+                            await Task.Delay(configuration.DockerContainerHealthCheckInterval, cancellationToken);
+                    }
 
                     if (!healthCheckPassed)
                     {
-                        await Task.Delay(100, cancellationToken);
-                        if (cancellationToken.IsCancellationRequested) return false;
+                        logger.LogError("Container '{configuration.DockerContainerName}' is not healthy after {maxHealthCheckAttempts} attempts.", configuration.DockerContainerName, maxHealthCheckAttempts);
+                        return false;
                     }
                 }
-                while (!healthCheckPassed);
 
                 containerIsInactiveState = false;
                 return containerIsInactiveState;
@@ -196,8 +254,6 @@ public abstract class ApplicationBase : IDisposable
     protected async IAsyncEnumerable<string> GetContainerIds(string dockerContainerIdOrName, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var allContainers = await dockerClient.Containers.ListContainersAsync(new ContainersListParameters() { All = true }, cancellationToken);
-        var allNetworks = await dockerClient.Networks.ListNetworksAsync(new NetworksListParameters() {  }, cancellationToken);
-        var allVolumes = await dockerClient.Volumes.ListAsync(new VolumesListParameters() {  }, cancellationToken);
 
         var baseContainer = allContainers.FirstOrDefault(c => c.Names.Contains($"/{dockerContainerIdOrName}"));
 
@@ -238,7 +294,23 @@ public abstract class ApplicationBase : IDisposable
 
     public virtual void Dispose()
     {
+        cancellationTokenSource?.Cancel();
+        cancellationTokenSource?.Dispose();
+
         dockerClient?.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    public bool CanIgnoreException(Exception ex)
+    {
+        logger.LogTrace(ex, "Checking exception");
+
+        if (ex is OperationCanceledException) return true;
+        if (ex is SocketException socketException && socketException.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted or SocketError.Success or SocketError.OperationAborted) return true;
+
+        if (ex.InnerException != null)
+            return CanIgnoreException(ex.InnerException);
+
+        return false;
     }
 }
