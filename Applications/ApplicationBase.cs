@@ -27,23 +27,88 @@ public abstract class ApplicationBase : IDisposable
 
     public ApplicationBase(ApplicationConfiguration configuration)
     {
-        logger = Program.LoggerFactory.CreateLogger<ApplicationBase>();
+        logger = Globals.LoggerFactory.CreateLogger<ApplicationBase>();
         activityCheckStopwatch.Start();
 
-        dockerClient = new DockerClientConfiguration(new Uri(configuration.DockerSocketUri)).CreateClient();
         this.configuration = configuration;
+
+        dockerClient = Globals.DockerManager.GetClient(configuration.DockerSocketUri);
 
         CheckIfContainerIsInactiveState();
     }
 
-    public void Start()
+    public async ValueTask Start()
     {
-        StartApplication(cancellationTokenSource.Token);
+        await StartApplication(cancellationTokenSource.Token);
+
+        Globals.DockerManager.MonitorForAnyEvents(dockerClient, OnAnyDockerEvent);
 
         _ = Task.Factory.StartNew(() => InactivityCheck(cancellationTokenSource.Token), cancellationTokenSource.Token, TaskCreationOptions.PreferFairness, TaskScheduler.Default);
     }
 
-    protected abstract void StartApplication(CancellationToken cancellationToken);
+    protected abstract ValueTask StartApplication(CancellationToken cancellationToken);
+
+    private async void OnAnyDockerEvent(Message message)
+    {
+        if (!message.Type.Equals("container", StringComparison.OrdinalIgnoreCase)) return;
+
+        var isThisContainer = false;
+
+        await foreach (var id in GetContainerIds())
+        {
+            if (id.Equals(message.ID, StringComparison.OrdinalIgnoreCase))
+            {
+                isThisContainer = true;
+                break;
+            }
+        }
+
+        if (!isThisContainer) return;
+
+        if (!containerIsInactiveState)
+        {
+            switch (message.Status)
+            {
+                case var status when
+                        status.Equals("die", StringComparison.OrdinalIgnoreCase) ||
+                        status.Equals("kill", StringComparison.OrdinalIgnoreCase) ||
+                        status.Equals("stop", StringComparison.OrdinalIgnoreCase) ||
+                        status.Equals("pause", StringComparison.OrdinalIgnoreCase):
+
+                    logger.LogInformation("Container '{configuration.DockerContainerName}' has been marked as '{status}'; marking as inactive...",
+                        configuration.DockerContainerName,
+                        message.Status);
+                    containerIsInactiveState = true;
+                    break;
+                case var status when status.Equals("health_status", StringComparison.OrdinalIgnoreCase) &&
+                        configuration.DockerContainerHealthCheck:
+                    var inspect = await dockerClient.Containers.InspectContainerAsync(message.ID);
+
+                    if (inspect == null || inspect.State.Health.Status != "healthy")
+                    {
+                        logger.LogInformation("Container '{configuration.DockerContainerName}' has failed health check; marking as inactive...", configuration.DockerContainerName);
+                        containerIsInactiveState = true;
+                    }
+                    break;
+            }
+        }
+        else if (EnsureContainerIsRunningTaskCompletionSource == null) // Check for weird states when we're NOT in charge of them
+        {
+            switch (message.Status)
+            {
+                case var status when
+                        status.Equals("unpause", StringComparison.OrdinalIgnoreCase) ||
+                        status.Equals("start", StringComparison.OrdinalIgnoreCase) ||
+                        status.Equals("restart", StringComparison.OrdinalIgnoreCase):
+
+                    logger.LogInformation("Container '{configuration.DockerContainerName}' has been marked as '{status}'; weird state, marking as inactive to double-check...",
+                        configuration.DockerContainerName,
+                        message.Status);
+                    containerIsInactiveState = true;
+                    break;
+            }
+        }
+    }
 
     private async ValueTask InactivityCheck(CancellationToken cancellationToken)
     {
@@ -64,15 +129,16 @@ public abstract class ApplicationBase : IDisposable
             {
                 logger.LogInformation("Container '{configuration.DockerContainerName}' is inactive; suspending...", configuration.DockerContainerName);
 
+                containerIsInactiveState = true;
+
                 await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
                     await ApplyToContainer(id);
-
-                containerIsInactiveState = true;
             }
             else
             {
                 // Container should already be inactive, so this is a sanity check to make sure it IS
                 // Since it's possible that something ELSE restarted it - user command, autorestart on update, etc
+                // And maybe it somehow bypassed the event system we have hooked up
                 logger.LogDebug("Container '{configuration.DockerContainerName}' is inactive; checking it still is...", configuration.DockerContainerName);
 
                 await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
@@ -138,6 +204,8 @@ public abstract class ApplicationBase : IDisposable
 
                 logger.LogInformation("Container '{configuration.DockerContainerName}' is inactive; starting...", configuration.DockerContainerName);
 
+                bool didAnything = false;
+
                 await foreach (var id in GetContainerIds(configuration.DockerContainerName, cancellationToken))
                 {
                     var inspect = await dockerClient.Containers.InspectContainerAsync(id, cancellationToken);
@@ -152,10 +220,12 @@ public abstract class ApplicationBase : IDisposable
                     if (inspect.State.Paused)
                     {
                         await dockerClient.Containers.UnpauseContainerAsync(id, cancellationToken);
+                        didAnything = true;
                     }
                     else if (!inspect.State.Running)
                     {
                         var started = await dockerClient.Containers.StartContainerAsync(id, new ContainerStartParameters(), cancellationToken);
+                        didAnything = true;
 
                         if (!started)
                         {
@@ -168,9 +238,11 @@ public abstract class ApplicationBase : IDisposable
 
                 if (cancellationToken.IsCancellationRequested) return false;
 
-                await Task.Delay(configuration.DockerContainerStartupTime, cancellationToken);
-
-                if (cancellationToken.IsCancellationRequested) return false;
+                if (didAnything)
+                {
+                    await Task.Delay(configuration.DockerContainerStartupTime, cancellationToken);
+                    if (cancellationToken.IsCancellationRequested) return false;
+                }
 
                 if (configuration.DockerContainerHealthCheck)
                 {
@@ -248,7 +320,7 @@ public abstract class ApplicationBase : IDisposable
         return null;
     }
 
-    protected IAsyncEnumerable<string> GetContainerIds(CancellationToken cancellationToken = default) => 
+    protected IAsyncEnumerable<string> GetContainerIds(CancellationToken cancellationToken = default) =>
         GetContainerIds(configuration.DockerContainerName, cancellationToken);
 
     protected async IAsyncEnumerable<string> GetContainerIds(string dockerContainerIdOrName, [EnumeratorCancellation] CancellationToken cancellationToken = default)

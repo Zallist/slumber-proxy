@@ -25,7 +25,7 @@ namespace ContainerSuspender.Applications
         private UdpClient udpListener;
         private readonly Dictionary<IPEndPoint, UdpForwarder> udpForwarders = new();
 
-        protected override void StartApplication(CancellationToken cancellationToken)
+        protected override ValueTask StartApplication(CancellationToken cancellationToken)
         {
             udpListener = new UdpClient(configuration.ListenPort)
             {
@@ -40,6 +40,8 @@ namespace ContainerSuspender.Applications
 
             _ = Task.Factory.StartNew(() => MonitorAndForwardTraffic(cancellationToken), cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             _ = Task.Factory.StartNew(() => UdpClientCleanup(cancellationToken), cancellationToken, TaskCreationOptions.PreferFairness, TaskScheduler.Default);
+
+            return ValueTask.CompletedTask;
         }
 
         private async ValueTask UdpClientCleanup(CancellationToken cancellationToken)

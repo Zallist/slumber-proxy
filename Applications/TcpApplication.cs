@@ -12,7 +12,7 @@ namespace ContainerSuspender.Applications
     {
         private TcpListener tcpListener;
 
-        protected override void StartApplication(CancellationToken cancellationToken)
+        protected override ValueTask StartApplication(CancellationToken cancellationToken)
         {
             tcpListener = new TcpListener(IPAddress.Parse("0.0.0.0"), configuration.ListenPort)
             {
@@ -26,6 +26,8 @@ namespace ContainerSuspender.Applications
             tcpListener.Start();
 
             _ = Task.Factory.StartNew(() => MonitorAndForwardTraffic(cancellationToken), cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+            return ValueTask.CompletedTask;
         }
 
         private async ValueTask MonitorAndForwardTraffic(CancellationToken token)
