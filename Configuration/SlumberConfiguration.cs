@@ -4,7 +4,7 @@ using Newtonsoft.Json;
 
 namespace SlumberProxy.Configuration;
 
-public class SuspenderConfiguration
+public class SlumberConfiguration
 {
     [JsonProperty(Required = Required.Always)]
     public List<ApplicationConfiguration> Applications { get; private set; } = new();

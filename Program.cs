@@ -58,7 +58,7 @@ class Program
             foreach (var application in applications)
                 await application.Start();
 
-            logger.LogInformation("Suspender started, listening...");
+            logger.LogInformation("Slumber Proxy started, listening...");
 
             await _shutdownEvent.Task;
 

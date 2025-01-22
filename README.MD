@@ -28,5 +28,5 @@ generally not JUST be a user-facing frontend, then this will do nothing at best 
 * Wireguard VPN - This is already pretty damn lightweight, but handles other protocol types than TCP/UDP, and adding a layer on top is overkill
 * Zoneminder - Cameras are always running, not just when you're looking
 * Caddy - Lightweight, already a reverse proxy
-	* You would want caddy to reverse proxy TO the suspender, then the suspender reverse proxy TO the application
+	* You would want caddy to reverse proxy TO the slumber proxy, then the slumber proxy reverse proxy TO the application
 	* Since Caddy handles SSL stuff

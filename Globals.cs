@@ -11,7 +11,7 @@ namespace SlumberProxy
     {
         private static string configPath = "config.json";
         
-        public static SuspenderConfiguration Configuration { get; private set; }
+        public static SlumberConfiguration Configuration { get; private set; }
         public static ILoggerFactory LoggerFactory { get; private set; }
         public static Container.DockerManager DockerManager { get; private set; }
 
@@ -53,7 +53,7 @@ namespace SlumberProxy
 
         private static void ParseConfigFile()
         {
-            var configuration = JsonConvert.DeserializeObject<SuspenderConfiguration>(File.ReadAllText(configPath), new JsonSerializerSettings());
+            var configuration = JsonConvert.DeserializeObject<SlumberConfiguration>(File.ReadAllText(configPath), new JsonSerializerSettings());
             Configuration = configuration ?? throw new Exception($"Failed to parse config file '{configPath}'.");
         }
 
