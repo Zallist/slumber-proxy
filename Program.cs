@@ -1,13 +1,13 @@
 using System;
 using System.Threading.Tasks;
 using System.IO;
-using ContainerSuspender.Configuration;
+using SlumberProxy.Configuration;
 using Newtonsoft.Json;
 using System.Collections.Generic;
-using ContainerSuspender.Applications;
+using SlumberProxy.Applications;
 using Microsoft.Extensions.Logging;
 
-namespace ContainerSuspender;
+namespace SlumberProxy;
 
 class Program
 {

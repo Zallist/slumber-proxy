@@ -3,10 +3,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using ContainerSuspender.Configuration;
+using SlumberProxy.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace ContainerSuspender.Applications
+namespace SlumberProxy.Applications
 {
     public class TcpApplication(ApplicationConfiguration configuration) : ApplicationBase(configuration)
     {

@@ -1,5 +1,5 @@
-# Container Suspender
-A tool which acts as a reverse proxy to a containered application, with a bit of extra logic to PAUSE or STOP containers which are not currently being hit.
+# Slumber Proxy
+A tool which acts as a transparent reverse proxy to a (currently Docker) application, with a bit of extra logic to PAUSE or STOP containers which are not currently being hit.
 
 # Features
 * Reverse proxy basically any kind of TCP or UDP request from LISTEN PORT to TARGET PORT at TARGET ADDRESS
@@ -12,7 +12,7 @@ A tool which acts as a reverse proxy to a containered application, with a bit of
 # Configuration
 Configuration is handled by a .json file, an commented example of which is located [Here](Configuration/config.example.json)
 
-# Confirmed applications that work without issue
+# Confirmed (docker) applications that work without issue
 * Stable Diffusion WebUI / Forge / SD.Next
 * Ollama
 * Open WebUI (so long as it's configured to ALSO go through for underlying services like Ollama)

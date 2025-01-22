@@ -7,12 +7,12 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using ContainerSuspender.Configuration;
+using SlumberProxy.Configuration;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Microsoft.Extensions.Logging;
 
-namespace ContainerSuspender.Applications;
+namespace SlumberProxy.Applications;
 
 public abstract class ApplicationBase : IDisposable
 {

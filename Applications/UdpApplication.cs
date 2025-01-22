@@ -5,12 +5,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using ContainerSuspender.Configuration;
+using SlumberProxy.Configuration;
 using Docker.DotNet;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 
-namespace ContainerSuspender.Applications
+namespace SlumberProxy.Applications
 {
     public class UdpApplication(ApplicationConfiguration configuration) : ApplicationBase(configuration)
     {

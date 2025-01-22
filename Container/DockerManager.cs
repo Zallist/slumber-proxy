@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 
-namespace ContainerSuspender.Container
+namespace SlumberProxy.Container
 {
     public class DockerManager : IDisposable
     {

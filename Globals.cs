@@ -1,11 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using ContainerSuspender.Configuration;
+using SlumberProxy.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 
-namespace ContainerSuspender
+namespace SlumberProxy
 {
     public static class Globals
     {

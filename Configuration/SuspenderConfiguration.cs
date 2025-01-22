@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace ContainerSuspender.Configuration;
+namespace SlumberProxy.Configuration;
 
 public class SuspenderConfiguration
 {

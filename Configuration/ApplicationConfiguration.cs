@@ -2,7 +2,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 
-namespace ContainerSuspender.Configuration;
+namespace SlumberProxy.Configuration;
 
 public class ApplicationConfiguration
 {
