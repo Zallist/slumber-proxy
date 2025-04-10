@@ -342,9 +342,7 @@ public abstract class ApplicationBase : IDisposable
         if (configuration.ApplyToDockerComposeGroup)
         {
             // If we care about the docker compose group, then we want to yield all containers in the group
-            var composeProject = baseContainer.Labels["com.docker.compose.project"];
-
-            if (string.IsNullOrEmpty(composeProject))
+            if (baseContainer.Labels?.TryGetValue("com.docker.compose.project", out var composeProject) != true || string.IsNullOrEmpty(composeProject))
             {
                 logger.LogInformation("Container '{dockerContainerIdOrName}' is not part of a docker compose group.", dockerContainerIdOrName);
             }
@@ -354,7 +352,7 @@ public abstract class ApplicationBase : IDisposable
                 {
                     if (container.ID == baseContainer.ID) continue; // Skip the base container
 
-                    if (container.Labels["com.docker.compose.project"] == composeProject)
+                    if (container.Labels?.TryGetValue("com.docker.compose.project", out var containerComposeProject) == true && containerComposeProject == composeProject)
                     {
                         yield return container.ID;
                         logger.LogDebug("Compose-Related container for '{dockerContainerIdOrName}' found with ID '{container.ID}'.", dockerContainerIdOrName, container.ID);
